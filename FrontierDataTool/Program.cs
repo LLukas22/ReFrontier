@@ -98,13 +98,24 @@ namespace FrontierDataTool
         // Dump data and strings
         static void DumpData(string suffix, string mhfpac, string mhfdat, string mhfinf)
         {
+            var base_dir = "C:\\Users\\lkreu\\Desktop\\MHFZZ\\Data";
+
+            string build_path(string filename)
+            {
+                return Path.Combine(base_dir,filename);
+            }
             #region SkillSystem
             // Get and dump skill system dictionary
-            Console.WriteLine("Dumping skill tree names.");
+            //Console.WriteLine("Dumping skill tree names.");
             MemoryStream msInput = new MemoryStream(File.ReadAllBytes(mhfpac));
             BinaryReader brInput = new BinaryReader(msInput);
-            brInput.BaseStream.Seek(soStringSkillPt, SeekOrigin.Begin); int sOffset = brInput.ReadInt32();
-            brInput.BaseStream.Seek(eoStringSkillPt, SeekOrigin.Begin); int eOffset = brInput.ReadInt32();
+            int sOffset = 0;
+            int eOffset = 0;
+
+            brInput.BaseStream.Seek(soStringSkillPt, SeekOrigin.Begin); 
+            sOffset = brInput.ReadInt32();
+            brInput.BaseStream.Seek(eoStringSkillPt, SeekOrigin.Begin); 
+            eOffset = brInput.ReadInt32();
 
             brInput.BaseStream.Seek(sOffset, SeekOrigin.Begin);
             List<KeyValuePair<int, string>> skillId = new List<KeyValuePair<int, string>>();
@@ -116,11 +127,11 @@ namespace FrontierDataTool
                 id++;
             }
 
-            string textName = $"mhsx_SkillSys_{suffix}.txt";
+            string textName = build_path($"mhsx_SkillSys_{suffix}.txt");
             using (StreamWriter file = new StreamWriter(textName, false, Encoding.UTF8))
                 foreach (KeyValuePair<int, string> entry in skillId)
                     file.WriteLine("{0}", entry.Value);
-            FileUploadFTP(textName, $"/www/MHFO/{textName}");
+            ////FileUploadFTP(textName, $"/www/MHFO/{textName}");
             #endregion
 
             #region ActiveSkill
@@ -135,11 +146,11 @@ namespace FrontierDataTool
                 activeSkill.Add(name);
             }
 
-            textName = $"mhsx_SkillActivate_{suffix}.txt";
+            textName = build_path($"mhsx_SkillActivate_{suffix}.txt");
             using (StreamWriter file = new StreamWriter(textName, false, Encoding.UTF8))
                 foreach (string entry in activeSkill)
                     file.WriteLine("{0}", entry);
-            FileUploadFTP(textName, $"/www/MHFO/{textName}");
+            //FileUploadFTP(textName, $"/www/MHFO/{textName}");
             #endregion
 
             #region SkillDescription
@@ -154,7 +165,7 @@ namespace FrontierDataTool
                 skillDesc.Add(name);
             }
 
-            textName = $"mhsx_SkillDesc_{suffix}.txt";
+            textName = build_path($"mhsx_SkillDesc_{suffix}.txt");
             using (StreamWriter file = new StreamWriter(textName, false, Encoding.UTF8))
                 foreach (string entry in skillDesc)
                     file.WriteLine("{0}", entry);
@@ -173,11 +184,10 @@ namespace FrontierDataTool
                 zSkill.Add(name);
             }
 
-            textName = $"mhsx_SkillZ_{suffix}.txt";
+            textName = build_path($"mhsx_SkillZ_{suffix}.txt");
             using (StreamWriter file = new StreamWriter(textName, false, Encoding.UTF8))
                 foreach (string entry in zSkill)
                     file.WriteLine("{0}", entry);
-            FileUploadFTP(textName, $"/www/MHFO/{textName}");
             #endregion
 
             #region Items
@@ -194,11 +204,10 @@ namespace FrontierDataTool
                 items.Add(name);
             }
 
-            textName = $"mhsx_Items_{suffix}.txt";
+            textName = build_path($"mhsx_Items_{suffix}.txt");
             using (StreamWriter file = new StreamWriter(textName, false, Encoding.UTF8))
                 foreach (string entry in items)
                     file.WriteLine("{0}", entry);
-            FileUploadFTP(textName, $"/www/MHFO/{textName}");
 
             Console.WriteLine("Dumping item descriptions.");
             brInput.BaseStream.Seek(soStringItemDesc, SeekOrigin.Begin); sOffset = brInput.ReadInt32();
@@ -211,7 +220,7 @@ namespace FrontierDataTool
                 itemsDesc.Add(name);
             }
 
-            textName = $"Items_Desc_{suffix}.txt";
+            textName = build_path($"Items_Desc_{suffix}.txt");
             using (StreamWriter file = new StreamWriter(textName, false, Encoding.UTF8))
                 foreach (string entry in itemsDesc)
                     file.WriteLine("{0}", entry);
@@ -321,7 +330,7 @@ namespace FrontierDataTool
             }
 
             // Write armor csv
-            using (var textWriter = new StreamWriter($"Armor.csv", false, Encoding.GetEncoding("shift-jis")))
+            using (var textWriter = new StreamWriter(build_path($"Armor.csv"), false, Encoding.GetEncoding("shift-jis")))
             {
                 var writer = new CsvWriter(textWriter);
                 writer.Configuration.Delimiter = "\t";
@@ -333,7 +342,7 @@ namespace FrontierDataTool
             using (StreamWriter file = new StreamWriter(textName, false, Encoding.UTF8))
                 foreach (var entry in armorEntries)
                     file.WriteLine("{0}", entry.name);
-            FileUploadFTP(textName, $"/www/MHFO/{textName}");
+            
             #endregion
 
             #region WeaponData
@@ -391,7 +400,7 @@ namespace FrontierDataTool
             }
 
             // Write csv
-            using (var textWriter = new StreamWriter("Melee.csv", false, Encoding.GetEncoding("shift-jis")))
+            using (var textWriter = new StreamWriter(build_path("Melee.csv"), false, Encoding.GetEncoding("shift-jis")))
             {
                 var writer = new CsvWriter(textWriter);
                 writer.Configuration.Delimiter = "\t";
@@ -478,7 +487,7 @@ namespace FrontierDataTool
             }
 
             // Write csv
-            using (var textWriter = new StreamWriter("Ranged.csv", false, Encoding.GetEncoding("shift-jis")))
+            using (var textWriter = new StreamWriter(build_path("Ranged.csv"), false, Encoding.GetEncoding("shift-jis")))
             {
                 var writer = new CsvWriter(textWriter);
                 writer.Configuration.Delimiter = "\t";
@@ -558,7 +567,7 @@ namespace FrontierDataTool
             }
 
             // Write csv
-            using (var textWriter = new StreamWriter("InfQuests.csv", false, Encoding.GetEncoding("shift-jis")))
+            using (var textWriter = new StreamWriter(build_path("InfQuests.csv"), false, Encoding.GetEncoding("shift-jis")))
             {
                 var writer = new CsvWriter(textWriter);
                 writer.Configuration.Delimiter = "\t";
@@ -665,12 +674,19 @@ namespace FrontierDataTool
 
         static string StringFromPointer(BinaryReader brInput)
         {
-            int off = brInput.ReadInt32();
-            long pos = brInput.BaseStream.Position;
-            brInput.BaseStream.Seek(off, SeekOrigin.Begin);
-            string str = Helpers.ReadNullterminatedString(brInput, Encoding.GetEncoding("shift-jis")).Replace("\n", "<NL>");
-            brInput.BaseStream.Seek(pos, SeekOrigin.Begin);
-            return str;
+            try {
+                int off = brInput.ReadInt32();
+                long pos = brInput.BaseStream.Position;
+                brInput.BaseStream.Seek(off, SeekOrigin.Begin);
+                string str = Helpers.ReadNullterminatedString(brInput, Encoding.GetEncoding("shift-jis")).Replace("\n", "<NL>");
+                brInput.BaseStream.Seek(pos, SeekOrigin.Begin);
+                return str;
+            }catch (Exception e)
+            {
+                Console.WriteLine(e.ToString());
+                return null;
+            }
+
         }
 
         static string GetModelIdData(int id)

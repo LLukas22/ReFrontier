@@ -1,6 +1,8 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using LibReFrontier;
 
@@ -20,6 +22,7 @@ namespace ReFrontier
         static bool ignoreJPK = false;
         static bool stageContainer = false;
         static bool autoStage = false;
+        static bool reencodeJPK = false;
 
         //[STAThread]
         static void Main(string[] args)
@@ -50,7 +53,18 @@ namespace ReFrontier
                 return;
             }
 
-            string input = args[0];
+            List<string> paths = new List<string>();
+            var arg = args[0];
+
+            if (arg.Contains(";"))
+            {
+                paths = arg.Split(';').ToList();
+            }
+            else
+            {
+                paths.Add(arg);
+            }
+
             if (args.Any("-log".Contains)) { createLog = true; repack = false; }
             if (args.Any("-nonRecursive".Contains)) { recursive = false; repack = false; }
             if (args.Any("-pack".Contains)) repack = true;
@@ -63,60 +77,99 @@ namespace ReFrontier
             if (args.Any("-ignoreJPK".Contains)) { ignoreJPK = true; repack = false; }
             if (args.Any("-stageContainer".Contains)) { stageContainer = true; repack = false; }
             if (args.Any("-autoStage".Contains)) { autoStage = true; repack = false; }
+            if (args.Any("-reencodeJPK".Contains)) { reencodeJPK=true; }
 
-            // Check file
-            if (File.Exists(input) || Directory.Exists(input))
+
+
+            void reencode_JPK(string file, UInt16 atype=4, int level=100, string meta_file=null)
             {
-                FileAttributes inputAttr = File.GetAttributes(input);
-                // Directories
-                if (inputAttr.HasFlag(FileAttributes.Directory))
+                var directory = Path.GetDirectoryName(file);
+                var fielname = Path.GetFileNameWithoutExtension(file);
+                var extension = Path.GetExtension(file);
+
+                var new_file = $"{fielname}_encoded{extension}";
+                var outPath = Path.Combine(directory, new_file);
+
+                Pack.JPKEncode(atype, file, outPath, level);
+                byte[] buffer = File.ReadAllBytes(outPath);
+                if(meta_file == null)
                 {
-                    if (!repack && !encrypt)
-                    {
-                        string[] inputFiles = Directory.GetFiles(input, "*.*", SearchOption.AllDirectories);
-                        ProcessMultipleLevels(inputFiles);
-                    }
-                    else if (repack) Pack.ProcessPackInput(input);
-                    else if (compress) Console.WriteLine("A directory was specified while in compression mode. Stopping.");
-                    else if (encrypt) Console.WriteLine("A directory was specified while in encryption mode. Stopping.");
+                    meta_file = $"{file}.meta";
+                    
                 }
-                // Single file
-                else
+                if (!File.Exists(meta_file))
+                    throw new Exception($"{meta_file} has to exist!");
+                byte[] bufferMeta = File.ReadAllBytes(meta_file);
+                buffer = Crypto.encEcd(buffer, bufferMeta);
+                File.WriteAllBytes(outPath, buffer);
+            } 
+    
+
+
+
+            foreach (var input in paths)
+            {
+                // Check file
+                if (File.Exists(input) || Directory.Exists(input))
                 {
-                    if (!repack && !encrypt && !compress)
+
+                    if (reencodeJPK)
                     {
-                        string[] inputFiles = { input };
-                        ProcessMultipleLevels(inputFiles);
+                        reencode_JPK(input);
+                        continue;
                     }
-                    else if (repack) Console.WriteLine("A single file was specified while in repacking mode. Stopping.");
-                    else if (compress) 
+                    FileAttributes inputAttr = File.GetAttributes(input);
+                    // Directories
+                    if (inputAttr.HasFlag(FileAttributes.Directory))
                     {
-                        string pattern = @"-compress (\d+),(\d+)";
-                        try
+                        if (!repack && !encrypt)
                         {
-                            Match match = Regex.Matches(string.Join(" ", args, 1, args.Length - 1), pattern)[0];
-                            ushort type = ushort.Parse(match.Groups[1].Value);
-                            int level = int.Parse(match.Groups[2].Value) * 100;
-                            Pack.JPKEncode(type, input, $"output\\{Path.GetFileName(input)}", level);
+                            string[] inputFiles = Directory.GetFiles(input, "*.*", SearchOption.AllDirectories);
+                            ProcessMultipleLevels(inputFiles);
                         }
-                        catch
-                        {
-                            Console.WriteLine("ERROR: Check compress input. Example: -compress 3,50");
-                        }
+                        else if (repack) Pack.ProcessPackInput(input);
+                        else if (compress) Console.WriteLine("A directory was specified while in compression mode. Stopping.");
+                        else if (encrypt) Console.WriteLine("A directory was specified while in encryption mode. Stopping.");
                     }
-                    else if (encrypt)
+                    // Single file
+                    else
                     {
-                        byte[] buffer = File.ReadAllBytes(input);
-                        byte[] bufferMeta = File.ReadAllBytes($"{input}.meta");
-                        buffer = Crypto.encEcd(buffer, bufferMeta);
-                        File.WriteAllBytes(input, buffer);
-                        Helpers.Print("File encrypted.", false);
-                        Helpers.GetUpdateEntry(input);
+                        if (!repack && !encrypt && !compress)
+                        {
+                            string[] inputFiles = { input };
+                            ProcessMultipleLevels(inputFiles);
+                        }
+                        else if (repack) Console.WriteLine("A single file was specified while in repacking mode. Stopping.");
+                        else if (compress)
+                        {
+                            string pattern = @"-compress (\d+),(\d+)";
+                            try
+                            {
+                                Match match = Regex.Matches(string.Join(" ", args, 1, args.Length - 1), pattern)[0];
+                                ushort type = ushort.Parse(match.Groups[1].Value);
+                                int level = int.Parse(match.Groups[2].Value) * 100;
+                                Pack.JPKEncode(type, input, $"output\\{Path.GetFileName(input)}", level);
+                            }
+                            catch
+                            {
+                                Console.WriteLine("ERROR: Check compress input. Example: -compress 3,50");
+                            }
+                        }
+                        else if (encrypt)
+                        {
+                            byte[] buffer = File.ReadAllBytes(input);
+                            byte[] bufferMeta = File.ReadAllBytes($"{input}.meta");
+                            buffer = Crypto.encEcd(buffer, bufferMeta);
+                            File.WriteAllBytes(input, buffer);
+                            Helpers.Print("File encrypted.", false);
+                            Helpers.GetUpdateEntry(input);
+                        }
                     }
+                    Console.WriteLine("Done.");
                 }
-                Console.WriteLine("Done.");
+                else Console.WriteLine("ERROR: Input file does not exist.");
             }
-            else Console.WriteLine("ERROR: Input file does not exist.");
+            
            if (!autoClose) Console.Read();
         }
 
