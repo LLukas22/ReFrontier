@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "ReFrontier.TranslationTransfer": {
+      "commandName": "Project",
+      "commandLineArgs": "\"C:\\Users\\lkreu\\Desktop\\MHFZZ\\ce_mhfdat.bin\"  \"C:\\Users\\lkreu\\Desktop\\MHFZZ\\japanese_mhfdat.bin\""
+    }
+  }
+}

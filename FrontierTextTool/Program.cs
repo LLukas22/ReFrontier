@@ -16,6 +16,13 @@ namespace FrontierTextTool
         static bool autoClose = false;
 
         //[STAThread]
+
+        /**
+         * dump "C:\Users\lkreu\Desktop\MHFZZ\mhfdat.bin" 3072 3328538
+         * insert "C:\Users\lkreu\Desktop\MHFZZ\mhfdat.bin" "C:\Users\lkreu\Desktop\MHFZZ\mhfdat.csv"
+         * 
+         * 
+         */
         static void Main(string[] args)
         {
             if (args.Length < 2) { Console.WriteLine("Too few arguments."); return; }
@@ -40,17 +47,17 @@ namespace FrontierTextTool
         }
 
         // Update MHFUP_00.DAT
-        static void UpdateList(string updEntry)
-        {
-            string file = updEntry.Split(',')[3].Split('\\')[1];
-            string[] lines = File.ReadAllLines("src\\MHFUP_00.DAT");
-            for (int i = 0; i < lines.Count(); i++)
-            {
-                if (lines[i].Contains(file)) lines[i] = updEntry.Replace("output", "dat");
-            }
-            File.WriteAllLines("src\\MHFUP_00.DAT", lines);
-            FileUploadSFTP(File.ReadAllBytes("src\\MHFUP_00.DAT"), $"/var/www/html/mhfo/MHFUP_00.DAT");
-        }
+        //static void UpdateList(string updEntry)
+        //{
+        //    string file = updEntry.Split(',')[3].Split('\\')[1];
+        //    string[] lines = File.ReadAllLines("src\\MHFUP_00.DAT");
+        //    for (int i = 0; i < lines.Count(); i++)
+        //    {
+        //        if (lines[i].Contains(file)) lines[i] = updEntry.Replace("output", "dat");
+        //    }
+        //    File.WriteAllLines("src\\MHFUP_00.DAT", lines);
+        //    FileUploadSFTP(File.ReadAllBytes("src\\MHFUP_00.DAT"), $"/var/www/html/mhfo/MHFUP_00.DAT");
+        //}
 
         // Insert CAT file to csv
         static void InsertCatFile(string catFile, string csvFile)
@@ -174,9 +181,12 @@ namespace FrontierTextTool
 
             // Create dictionary with offset replacements
             Dictionary<int, int> offsetDict = new Dictionary<int, int>();
-            for (int i = 0; i < eStringsCount; i++) offsetDict.Add((int)eStringsOffsets[i], inputArray.Length + eStringLengths.Take(i).Sum());
+            for (int i = 0; i < eStringsCount; i++) 
+                offsetDict.Add((int)eStringsOffsets[i], inputArray.Length + eStringLengths.Take(i).Sum());
 
-            if (verbose) Console.WriteLine($"Filling array of size {eStringsLength.ToString("X8")}...");
+            if (verbose) 
+                Console.WriteLine($"Filling array of size {eStringsLength.ToString("X8")}...");
+
             byte[] eStringsArray = new byte[eStringsLength];
             for (int i = 0, j = 0; i < stringDatabase.Count; i++)
             {
@@ -198,7 +208,8 @@ namespace FrontierTextTool
                 int cur = BitConverter.ToInt32(inputArray, p);
                 if (offsetDict.ContainsKey(cur) && p > 10000)
                 {
-                    int replacement = 0; offsetDict.TryGetValue(cur, out replacement);
+                    int replacement = 0; 
+                    offsetDict.TryGetValue(cur, out replacement);
                     byte[] newPointer = BitConverter.GetBytes(replacement);
                     for (int w = 0; w < 4; w++) inputArray[p + w] = newPointer[w];
                 }
@@ -209,24 +220,26 @@ namespace FrontierTextTool
             Array.Copy(inputArray, outputArray, inputArray.Length);
             Array.Copy(eStringsArray, 0, outputArray, inputArray.Length, eStringsArray.Length);
 
+
+            var dir = Path.GetDirectoryName(inputFile);
+            var outputDir = Path.Combine(dir, "output");
             // Output file
-            Directory.CreateDirectory("output");
-            string outputFile = $"output\\{Path.GetFileName(inputFile)}";
+            Directory.CreateDirectory(outputDir);
+            string outputFile = Path.Combine(outputDir,Path.GetFileName(inputFile));
             File.WriteAllBytes(outputFile, outputArray);
 
             // Pack with jpk type 0 and encrypt file with ecd
             Pack.JPKEncode(0, outputFile, outputFile, 15);
             byte[] buffer = File.ReadAllBytes(outputFile);
-            byte[] bufferMeta = File.ReadAllBytes($"{outputFile}.meta");
+            byte[] bufferMeta = File.ReadAllBytes($"{inputFile}.meta");
             buffer = Crypto.encEcd(buffer, bufferMeta);
             File.WriteAllBytes(outputFile, buffer);
 
             // Update list
             string updEntry = Helpers.GetUpdateEntry(outputFile);
-            UpdateList(updEntry);
 
             // Upload to ftp
-            FileUploadSFTP(buffer, $"/var/www/html/mhfo/dat/{Path.GetFileName(inputFile)}");
+            // FileUploadSFTP(buffer, $"/var/www/html/mhfo/dat/{Path.GetFileName(inputFile)}");
         }
 
         // dump mhfpac.bin 4416 1278872
@@ -240,8 +253,11 @@ namespace FrontierTextTool
             Console.WriteLine($"Strings at: 0x{startOffset.ToString("X8")} - 0x{endOffset.ToString("X8")}. Size 0x{(endOffset - startOffset).ToString("X8")}");
 
             string fileName = Path.GetFileNameWithoutExtension(input);
-            if (File.Exists($"{fileName}.csv")) File.Delete($"{fileName}.csv");
-            StreamWriter txtOutput = new StreamWriter($"{fileName}.csv", true, Encoding.GetEncoding("shift-jis"));
+            string directory = Path.GetDirectoryName(input);
+            string csv_fiel = Path.Combine(directory, $"{fileName}.csv");
+            if (File.Exists(csv_fiel)) 
+                File.Delete(csv_fiel);
+            StreamWriter txtOutput = new StreamWriter(csv_fiel, true, Encoding.GetEncoding("shift-jis"));
             txtOutput.WriteLine("Offset\tHash\tjString\teString");
 
             brInput.BaseStream.Seek(startOffset, SeekOrigin.Begin);
@@ -252,7 +268,7 @@ namespace FrontierTextTool
                     Replace("\t", "<TAB>"). // Replace tab
                     Replace("\r\n", "<CLINE>"). // Replace carriage return
                     Replace("\n", "<NLINE>"); // Replace new line
-                txtOutput.WriteLine($"{off}\t{Helpers.GetCrc32(Encoding.GetEncoding("shift-jis").GetBytes(str))}\t{str}\t");
+                txtOutput.WriteLine($"{off}\t{Helpers.GetCrc32(Encoding.GetEncoding("shift-jis").GetBytes(str))}\t{str}\t{str}");
             }
             txtOutput.Close();
         }
