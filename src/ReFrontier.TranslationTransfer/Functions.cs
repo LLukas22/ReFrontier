@@ -1,10 +1,13 @@
 ﻿using CsvHelper;
 using Konsole;
+using Microsoft.VisualBasic;
 using ReFrontier.Library;
 using System;
 using System.Collections.Generic;
 using System.IO.Enumeration;
 using System.Linq;
+using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using System.Xml;
@@ -101,54 +104,156 @@ namespace ReFrontier.TranslationTransfer
             return uncompressedFile;
         }
 
+        public class TranslationEntry
+        {
+            public UInt32 Offset { get; set; }
+            public UInt32 Hash { get; set; }
+            public string Japanese { get; set; }
+            public string Translation { get; set; }
+        }
+
+
+        public static byte[] CopyTranslationBlob(byte[] translated, byte[] toPatch)
+        {
+            var jap_length = toPatch.Length; //26454976
+            var translated_length = translated.Length; //28717781
+
+            var tranlated_blob = translated[jap_length..].ToList();
+
+            var japanese_list = toPatch.ToList();
+
+            var combined = japanese_list.Concat(tranlated_blob).ToArray();
+            return combined;
+        }
+        public static string ExtractTranslations(string translatedFile,string japaneseFile, int startOffset = 3072, int endOffset = 3328538)
+        {
+            var dir = Path.GetDirectoryName(translatedFile);
+            //Extract the texts from the JP File
+            var texts = ExtractTexts(japaneseFile, startOffset, endOffset);
+
+            //Build a dictionary 
+            var offset_original_lookup = texts.ToDictionary(x => x.Offset, y => y);
+
+            //Get the differenze in sizes of the files => The english translations are appended at the end
+            var japanese_length = File.ReadAllBytes(japaneseFile).Length;
+            var translated_length = File.ReadAllBytes(translatedFile).Length;
+            var diff = translated_length-japanese_length;
+
+            if (diff < 0)
+                throw new Exception("The translation file contains no Translations!");
+
+            var translated_texts = ExtractTexts(translatedFile, startOffset,-1);
+            var offset_translation_lookup = translated_texts.ToDictionary(x => x.Offset, y => y);
+
+            Console.WriteLine($"Trying to find english translations!");
+            //Iterate pver the translation array and extract the pointers
+            byte[] translatedArray = File.ReadAllBytes(translatedFile);
+            byte[] japaneseArray = File.ReadAllBytes(japaneseFile);
+            byte[] japaneseArray_toPatch = File.ReadAllBytes(japaneseFile);
+            var handledPointers = new HashSet<uint>();
+            var matched_translations = new List<TranslationEntry>();
+            for (int p = 0; p < japaneseArray.Length; p += 4)
+            {
+                if (p + 4 > japaneseArray.Length) 
+                    continue;
+                //Get the original pointer
+                uint original = (uint)BitConverter.ToInt32(japaneseArray, p);
+                
+                
+                if (offset_original_lookup.ContainsKey((uint)original) && p > 10000)
+                {
+                    //Read the pointer from patched the file
+                    uint patched = (uint)BitConverter.ToInt32(translatedArray, p);
+                    //Compare both
+                    if (original!=patched)
+                    {
+                        //Apply the patched pointer 
+                        for(int k = 0; k<4; k++)
+                        {
+                            japaneseArray_toPatch[p+k]=translatedArray[p+k];
+                        }
+                        
+
+                        if (offset_translation_lookup.ContainsKey(patched))
+                        {
+                            handledPointers.Add(original);
+                            var original_entry = offset_original_lookup[original];
+                            var translated_entry = offset_translation_lookup[patched];
+                            matched_translations.Add(new() {
+                                Offset=original_entry.Offset,
+                                Hash=original_entry.Hash,
+                                Japanese=original_entry.Japanese,
+                                Translation=translated_entry.Japanese
+                            });
+                        }
+                    }
+                }
+            }
+
+            var patchedFileName = Path.Combine(dir, "patched.bin");
+            var patchedArray = CopyTranslationBlob(translatedArray,japaneseArray_toPatch);
+            File.WriteAllBytes(patchedFileName, patchedArray);
+            Console.WriteLine($"Extracted {matched_translations.Count} translations!");
+
+
+            return patchedFileName;
+        }
+
+        public static void WriteTranslations(List<TranslationEntry> translations,string path)
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            var encoding = Encoding.GetEncoding("shift-jis");
+
+            StreamWriter txtOutput = new StreamWriter(path, true, encoding);
+            txtOutput.WriteLine("Offset\tHash\tJapanese\tTranslation");
+            foreach (var translation in translations)
+            {
+                txtOutput.WriteLine($"{translation.Offset}\t{translation.Hash}\t{translation.Japanese}\t{translation.Translation}");
+            }
+            txtOutput.Close();
+        }
+
         // dump mhfpac.bin 4416 1278872
         // dump mhfdat.bin 3072 3328538
-        public static string ExtractTranslations(string uncompressedFile,int startOffset= 3072,int endOffset= 3328538)
+        public static List<TranslationEntry> ExtractTexts(string uncompressedFile,int startOffset= 3072,int endOffset= 3328538)
         {
-            var filename = Path.GetFileNameWithoutExtension(uncompressedFile);
-            var dir = Path.GetDirectoryName(uncompressedFile);
+            //var filename = Path.GetFileNameWithoutExtension(uncompressedFile);
+            //var dir = Path.GetDirectoryName(uncompressedFile);
 
-            string output = "";
-
+            //string output = "";
             byte[] buffer = File.ReadAllBytes(uncompressedFile);
             MemoryStream msInput = new MemoryStream(buffer);
             BinaryReader brInput = new BinaryReader(msInput);
 
-            Console.WriteLine($"Extracting Translations at: 0x{startOffset.ToString("X8")} - 0x{endOffset.ToString("X8")}. Size 0x{(endOffset - startOffset).ToString("X8")}");
+            var end_length = endOffset > startOffset ? endOffset : brInput.BaseStream.Length;
 
+            Console.WriteLine($"Extracting Translations at: 0x{startOffset.ToString("X8")} - 0x{end_length.ToString("X8")}. Size 0x{(end_length - startOffset).ToString("X8")}");
 
-            output = Path.Combine(dir, $"{filename}.csv");
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
             var encoding = Encoding.GetEncoding("shift-jis");
-            if (File.Exists(output))
-                File.Delete(output);
-            StreamWriter txtOutput = new StreamWriter(output, true, encoding);
-            txtOutput.WriteLine("Offset\tHash\tOriginalString\tTranslatedString");
 
             brInput.BaseStream.Seek(startOffset, SeekOrigin.Begin);
-            while (brInput.BaseStream.Position < endOffset)
+
+            var entries = new List<TranslationEntry>();
+            while (brInput.BaseStream.Position < end_length)
             {
                 long off = brInput.BaseStream.Position;
                 string str = Helpers.ReadNullterminatedString(brInput, encoding).
                     Replace("\t", "<TAB>"). // Replace tab
                     Replace("\r\n", "<CLINE>"). // Replace carriage return
                     Replace("\n", "<NLINE>"); // Replace new line
-                txtOutput.WriteLine($"{off}\t{Helpers.GetCrc32(encoding.GetBytes(str))}\t{str}\t{str}");
+                entries.Add(new() { Offset=(uint)off,Hash=Helpers.GetCrc32(encoding.GetBytes(str)),Japanese=str });
+                
             }
-            txtOutput.Close();
-
-            Console.WriteLine($"Sucessfully dumped translations to {output}!");
-            return output;
+            Console.WriteLine($"Sucessfully dumped translations!");
+            return entries;
         }
 
 
-        public class StringDatabase
-        {
-            public UInt32 Offset { get; set; }
-            public UInt32 Hash { get; set; }
-            public string jString { get; set; }
-            public string eString { get; set; }
-        }
+     
 
         public static string ApplyTranslations(string translationFile,string fileToPatch)
         {
@@ -167,7 +272,7 @@ namespace ReFrontier.TranslationTransfer
                 return encoding.GetBytes(input).Length + 1;
             }
 
-            var stringDatabase = new List<StringDatabase>();
+            var stringDatabase = new List<TranslationEntry>();
             using (var reader = new StreamReader(translationFile, encoding))
             {
                 using (var csv = new CsvReader(reader))
@@ -179,11 +284,11 @@ namespace ReFrontier.TranslationTransfer
                     csv.ReadHeader();
                     while (csv.Read())
                     {
-                        var record = new StringDatabase
+                        var record = new TranslationEntry
                         {
                             Offset = csv.GetField<UInt32>("Offset"),
                             Hash = csv.GetField<UInt32>("Hash"),
-                            eString = csv.GetField("TranslatedString").
+                            Translation = csv.GetField("Translation").
                             Replace("<TAB>", "\t"). // Replace tab
                             Replace("<CLINE>", "\r\n"). // Replace carriage return
                             Replace("<NLINE>", "\n") // Replace new line
@@ -200,10 +305,10 @@ namespace ReFrontier.TranslationTransfer
             var pb_offsets = new ProgressBar(stringDatabase.Count);
             foreach (var obj in stringDatabase)
             {
-                if (obj.eString != "")
+                if (obj.Translation != "")
                 {
                     eStringsOffsets.Add(obj.Offset);
-                    eStringLengths.Add(GetNullterminatedStringLength(obj.eString));
+                    eStringLengths.Add(GetNullterminatedStringLength(obj.Translation));
                 }
                 pb_offsets.Next("Getting Offsets");
             }
@@ -213,6 +318,7 @@ namespace ReFrontier.TranslationTransfer
             // Create dictionary with offset replacements
             var pb_offset_dict = new ProgressBar(eStringsCount);
             Dictionary<int, int> offsetDict = new Dictionary<int, int>();
+
             for (int i = 0; i < eStringsCount; i++)
             {
                 offsetDict.Add((int)eStringsOffsets[i], inputArray.Length + eStringLengths.Take(i).Sum());
@@ -223,10 +329,10 @@ namespace ReFrontier.TranslationTransfer
             byte[] eStringsArray = new byte[eStringsLength];
             for (int i = 0, j = 0; i < stringDatabase.Count; i++)
             {
-                if (stringDatabase[i].eString != "")
+                if (stringDatabase[i].Translation != "")
                 {
                     // Write string to string array
-                    byte[] eStringArray = encoding.GetBytes(stringDatabase[i].eString);
+                    byte[] eStringArray = encoding.GetBytes(stringDatabase[i].Translation);
                     Array.Copy(eStringArray, 0, eStringsArray, eStringLengths.Take(j).Sum(), eStringLengths[j] - 1);
                     j++;
                 }
