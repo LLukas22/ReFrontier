@@ -4,11 +4,14 @@ using Microsoft.VisualBasic;
 using ReFrontier.Library;
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
+using System.IO;
 using System.IO.Enumeration;
 using System.Linq;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using System.Xml;
 
@@ -104,6 +107,57 @@ namespace ReFrontier.TranslationTransfer
             return uncompressedFile;
         }
 
+        public class QuestEntry
+        {
+            public int ID { get; set; }
+            public int Flag { get; set; }
+            public int Info { get; set; }
+        }
+        public static void ExtractQuestInfo(string decryptedFile)
+        {
+            var dir = Path.GetDirectoryName(decryptedFile);
+            byte[] data = File.ReadAllBytes(decryptedFile);
+            var flagset = new HashSet<int>();
+            var infoset = new HashSet<int>();
+
+            Dictionary<Ranks, List<QuestEntry>> questData = new();
+            foreach(var rank in Enum.GetValues<Ranks>())
+            {
+                var rankData = new List<QuestEntry>();
+
+                var rank_start_address = MHFDat.GetRankAddress(rank, data);
+
+                for(var i=0; true; i++)
+                {
+                    var quest_address = rank_start_address + (i * 8);
+
+                    if (quest_address>=MHFDat.OriginalLength)
+                        break;
+
+                    int quest_id = BitConverter.ToInt16(data, quest_address);
+                    if (quest_id==0)
+                        break;
+
+                    int flag = BitConverter.ToInt16(data, quest_address + 2);
+                    int info = BitConverter.ToInt16(data, quest_address + 4);
+                    int unknown = BitConverter.ToInt16(data, quest_address + 6);
+
+                    flagset.Add(flag);
+                    infoset.Add(info);
+                    rankData.Add(new() { ID = quest_id, Info=info, Flag=flag });
+
+                }
+
+                questData.Add(rank, rankData);
+            }
+            
+            string fileName = Path.Combine(dir, "keyquestinfo.json");
+            var options = new JsonSerializerOptions { WriteIndented = true };
+            string jsonString = JsonSerializer.Serialize<Dictionary<Ranks, List<QuestEntry>>>(questData, options);
+            File.WriteAllText(fileName, jsonString);
+
+        }
+
         public class TranslationEntry
         {
             public UInt32 Offset { get; set; }
@@ -113,19 +167,31 @@ namespace ReFrontier.TranslationTransfer
         }
 
 
+
+        public static T[] ConcatArrays<T>(T[] first, T[] second)
+        {
+            var result = new T[first.Length + second.Length];
+            first.CopyTo(result, 0);
+            second.CopyTo(result, first.Length);
+            return result;
+        }
+        /// <summary>
+        /// Can be used to add the padded translations from a translated file to an original japanese file
+        /// </summary>
         public static byte[] CopyTranslationBlob(byte[] translated, byte[] toPatch)
         {
-            var jap_length = toPatch.Length; //26454976
-            var translated_length = translated.Length; //28717781
+            var jap_length = toPatch.Length; //26454976 for original mhfdat.bin
+            var translated_length = translated.Length; //28717781 for mhfdat.bin of community edition 4.1
 
-            var tranlated_blob = translated[jap_length..].ToList();
+            if(jap_length <= translated_length)
+            {
+                throw new Exception();
+            }
+            var tranlated_blob = translated[jap_length..];
 
-            var japanese_list = toPatch.ToList();
-
-            var combined = japanese_list.Concat(tranlated_blob).ToArray();
-            return combined;
+            return ConcatArrays(toPatch, tranlated_blob);
         }
-        public static string ExtractTranslations(string translatedFile,string japaneseFile, int startOffset = 3072, int endOffset = 3328538)
+        public static List<TranslationEntry> ExtractTranslations(string translatedFile,string japaneseFile, int startOffset = 3072, int endOffset = 3328538)
         {
             var dir = Path.GetDirectoryName(translatedFile);
             //Extract the texts from the JP File
@@ -142,23 +208,23 @@ namespace ReFrontier.TranslationTransfer
             if (diff < 0)
                 throw new Exception("The translation file contains no Translations!");
 
-            var translated_texts = ExtractTexts(translatedFile, startOffset,-1);
+            //Extract the english translations from the end of the file
+            var translated_texts = ExtractTexts(translatedFile, japanese_length, -1);
             var offset_translation_lookup = translated_texts.ToDictionary(x => x.Offset, y => y);
 
             Console.WriteLine($"Trying to find english translations!");
-            //Iterate pver the translation array and extract the pointers
+
             byte[] translatedArray = File.ReadAllBytes(translatedFile);
             byte[] japaneseArray = File.ReadAllBytes(japaneseFile);
-            byte[] japaneseArray_toPatch = File.ReadAllBytes(japaneseFile);
-            var handledPointers = new HashSet<uint>();
-            var matched_translations = new List<TranslationEntry>();
+            //byte[] japaneseArray_toPatch = File.ReadAllBytes(japaneseFile);
+            var matched_translations = new Dictionary<uint,TranslationEntry>();
+            //Iterate over the original file 
             for (int p = 0; p < japaneseArray.Length; p += 4)
             {
                 if (p + 4 > japaneseArray.Length) 
                     continue;
                 //Get the original pointer
                 uint original = (uint)BitConverter.ToInt32(japaneseArray, p);
-                
                 
                 if (offset_original_lookup.ContainsKey((uint)original) && p > 10000)
                 {
@@ -168,35 +234,39 @@ namespace ReFrontier.TranslationTransfer
                     if (original!=patched)
                     {
                         //Apply the patched pointer 
-                        for(int k = 0; k<4; k++)
-                        {
-                            japaneseArray_toPatch[p+k]=translatedArray[p+k];
-                        }
+                        //for(int k = 0; k<4; k++)
+                        //{
+                        //    japaneseArray_toPatch[p+k]=translatedArray[p+k];
+                        //}
                         
-
+                        //Check if the entry is translated
                         if (offset_translation_lookup.ContainsKey(patched))
                         {
-                            handledPointers.Add(original);
                             var original_entry = offset_original_lookup[original];
                             var translated_entry = offset_translation_lookup[patched];
-                            matched_translations.Add(new() {
-                                Offset=original_entry.Offset,
-                                Hash=original_entry.Hash,
-                                Japanese=original_entry.Japanese,
-                                Translation=translated_entry.Japanese
-                            });
+
+                            if (!matched_translations.ContainsKey(original_entry.Offset))
+                            {
+                                matched_translations.Add(original_entry.Offset, new()
+                                {
+                                    Offset=original_entry.Offset,
+                                    Hash=original_entry.Hash,
+                                    Japanese=original_entry.Japanese,
+                                    Translation=translated_entry.Japanese
+                                });
+                            }
                         }
                     }
                 }
             }
 
-            var patchedFileName = Path.Combine(dir, "patched.bin");
-            var patchedArray = CopyTranslationBlob(translatedArray,japaneseArray_toPatch);
-            File.WriteAllBytes(patchedFileName, patchedArray);
+            //var patchedFileName = Path.Combine(dir, "patched.bin");
+            //var patchedArray = CopyTranslationBlob(translatedArray,japaneseArray_toPatch);
+            // File.WriteAllBytes(patchedFileName, patchedArray);
             Console.WriteLine($"Extracted {matched_translations.Count} translations!");
 
-
-            return patchedFileName;
+            var sorted_translations = matched_translations.Select(kvp => kvp.Value).OrderBy(o => o.Offset).ToList();
+            return sorted_translations;
         }
 
         public static void WriteTranslations(List<TranslationEntry> translations,string path)
@@ -218,15 +288,11 @@ namespace ReFrontier.TranslationTransfer
 
         // dump mhfpac.bin 4416 1278872
         // dump mhfdat.bin 3072 3328538
-        public static List<TranslationEntry> ExtractTexts(string uncompressedFile,int startOffset= 3072,int endOffset= 3328538)
+        public static List<TranslationEntry> ExtractTexts(string uncompressedFile,int startOffset= MHFDat.JapaneseTextStart, int endOffset= MHFDat.JapaneseTextEnd)
         {
-            //var filename = Path.GetFileNameWithoutExtension(uncompressedFile);
-            //var dir = Path.GetDirectoryName(uncompressedFile);
-
-            //string output = "";
             byte[] buffer = File.ReadAllBytes(uncompressedFile);
-            MemoryStream msInput = new MemoryStream(buffer);
-            BinaryReader brInput = new BinaryReader(msInput);
+            using MemoryStream msInput = new MemoryStream(buffer);
+            using BinaryReader brInput = new BinaryReader(msInput);
 
             var end_length = endOffset > startOffset ? endOffset : brInput.BaseStream.Length;
 
@@ -253,25 +319,49 @@ namespace ReFrontier.TranslationTransfer
         }
 
 
-     
+        
+        static byte[] paddingbyte = new byte[1];
+        class PatchEntry
+        {
+            public PatchEntry(int offset, string text,Encoding encoding)
+            {
+                this.Offset = offset;
+                this.Text = text;
+                this.Encoded = ConcatArrays(encoding.GetBytes(text), paddingbyte) ; //The encoding must be 00 terminated => add a 0 to the end of the array
+                this.Length = Encoded.Length;
+            }
 
-        public static string ApplyTranslations(string translationFile,string fileToPatch)
+            public readonly int Offset;
+            public readonly int Length;
+            public readonly byte[] Encoded;
+            public readonly string Text;
+        }
+
+        public static T[] ConcatArrays<T>(params T[][] p)
+        {
+            var position = 0;
+            var outputArray = new T[p.Sum(a => a.Length)];
+            foreach (var curr in p)
+            {
+                Array.Copy(curr, 0, outputArray, position, curr.Length);
+                position += curr.Length;
+            }
+            return outputArray;
+        }
+
+
+        public static string ApplyTranslations(string translationFile,string fileToPatch,string translatedFile)
         {
             var filename = Path.GetFileNameWithoutExtension(fileToPatch);
             var dir = Path.GetDirectoryName(fileToPatch);
             var extension = Path.GetExtension(fileToPatch);
 
-
             byte[] inputArray = File.ReadAllBytes(fileToPatch);
+            byte[] translatedArray = File.ReadAllBytes(translatedFile);
 
-            // Read csv
             var encoding = Encoding.GetEncoding("shift-jis");
 
-            int GetNullterminatedStringLength(string input)
-            {
-                return encoding.GetBytes(input).Length + 1;
-            }
-
+            // Read csv
             var stringDatabase = new List<TranslationEntry>();
             using (var reader = new StreamReader(translationFile, encoding))
             {
@@ -298,73 +388,79 @@ namespace ReFrontier.TranslationTransfer
                 }
             }
 
+            
             // Get info for translation array and get all offsets that need to be remapped
-            List<UInt32> eStringsOffsets = new List<uint>();
-            List<Int32> eStringLengths = new List<int>();
-
-            var pb_offsets = new ProgressBar(stringDatabase.Count);
-            foreach (var obj in stringDatabase)
+            Dictionary<int,PatchEntry> patchEntriesLookup = new ();
+            List<PatchEntry> patchEntries = new();
+            //Create the patch entries, these will calculate the encoding,offset and length of each english entry
+            foreach (var entry in stringDatabase)
             {
-                if (obj.Translation != "")
-                {
-                    eStringsOffsets.Add(obj.Offset);
-                    eStringLengths.Add(GetNullterminatedStringLength(obj.Translation));
-                }
-                pb_offsets.Next("Getting Offsets");
-            }
-            int eStringsLength = eStringLengths.Sum();
-            int eStringsCount = eStringLengths.Count;
+                if (string.IsNullOrEmpty(entry.Translation))
+                    continue;
 
-            // Create dictionary with offset replacements
-            var pb_offset_dict = new ProgressBar(eStringsCount);
-            Dictionary<int, int> offsetDict = new Dictionary<int, int>();
-
-            for (int i = 0; i < eStringsCount; i++)
-            {
-                offsetDict.Add((int)eStringsOffsets[i], inputArray.Length + eStringLengths.Take(i).Sum());
-                pb_offset_dict.Next("Calculationg Offsets");
+                PatchEntry patch_entry = new((int)entry.Offset, entry.Translation, encoding);
+                patchEntriesLookup.Add((int)entry.Offset, patch_entry);
+                patchEntries.Add(patch_entry);
             }
 
-            var pb_stringArray = new ProgressBar(stringDatabase.Count);
-            byte[] eStringsArray = new byte[eStringsLength];
-            for (int i = 0, j = 0; i < stringDatabase.Count; i++)
+
+            // create a dictionary for each offset. We later need to search all original japanese pointers and swap them with the english ones
+            Dictionary<int, int> offsetLookup = new Dictionary<int, int>();
+            int startAddress = inputArray.Length; //We will append the translations to the file => Start at the end of the original file
+            foreach(var patch in patchEntries)
             {
-                if (stringDatabase[i].Translation != "")
-                {
-                    // Write string to string array
-                    byte[] eStringArray = encoding.GetBytes(stringDatabase[i].Translation);
-                    Array.Copy(eStringArray, 0, eStringsArray, eStringLengths.Take(j).Sum(), eStringLengths[j] - 1);
-                    j++;
-                }
-                pb_stringArray.Next("Building Encoded String Arrays");
+                offsetLookup.Add(patch.Offset, startAddress);
+                startAddress += patch.Length; //advance the pointer to the next padded 00
             }
 
-            // Replace offsets in binary file
-            var pb_replace = new ProgressBar(inputArray.Length);
+            //Create the English Translation Array by combining all encodings
+            var encoded_translations = patchEntries.Select(x => x.Encoded).ToArray();
+            var englishBlob = ConcatArrays(encoded_translations);
+
+
+            //Open a second copy of the original file that actually will be modified
+            var patched_array = File.ReadAllBytes(fileToPatch);
+            patched_array = ConcatArrays(patched_array, englishBlob);
+
+            var successfull_patches = 0;
+
+            //Iterate over the original file and search all pointers that need to be remapped
             for (int p = 0; p < inputArray.Length; p += 4)
             {
-                if (p + 4 > inputArray.Length) continue;
-                int cur = BitConverter.ToInt32(inputArray, p);
-                if (offsetDict.ContainsKey(cur) && p > 10000)
+                if (p + 4 > inputArray.Length)
+                    continue;
+
+                int currentPointer = BitConverter.ToInt32(inputArray, p);
+                //If we found a new pointer we exchange them
+                if (p > MHFDat.TranslationPointersStart && offsetLookup.ContainsKey(currentPointer))
                 {
-                    int replacement = 0;
-                    offsetDict.TryGetValue(cur, out replacement);
+                    //check if we are in a region we dont want to patch
+                    bool skip = false;
+                    foreach(var (start,end) in MHFDat.TranslationInvalidRegions)
+                    {
+                        if (p>=start && p<=end)
+                            skip=true;
+                    }
+
+                    if (skip)
+                        continue;
+
+                    int replacement = offsetLookup[currentPointer];
+                    //Get binary Representation
                     byte[] newPointer = BitConverter.GetBytes(replacement);
-                    for (int w = 0; w < 4; w++) inputArray[p + w] = newPointer[w];
+                    //Apply it to the patched array
+                    for (int w = 0; w < 4; w++)
+                        patched_array[p + w] = newPointer[w];
+
+                    successfull_patches++;
                 }
-                pb_replace.Refresh(p, "Replacing Strings in Original File");
             }
 
-            // Combine arrays
-            byte[] outputArray = new byte[inputArray.Length + eStringsLength];
-            Array.Copy(inputArray, outputArray, inputArray.Length);
-            Array.Copy(eStringsArray, 0, outputArray, inputArray.Length, eStringsArray.Length);
-
-
+            Console.WriteLine($"Applied {successfull_patches} patches!");
 
             // Output file
             string outputFile = Path.Combine(dir, $"{filename}_patched{extension}");
-            File.WriteAllBytes(outputFile, outputArray);
+            File.WriteAllBytes(outputFile, patched_array);
             Console.WriteLine($"Saved patched file as '{outputFile}'");
             return outputFile;
 
