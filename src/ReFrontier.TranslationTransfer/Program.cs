@@ -10,28 +10,25 @@ var japanese_file = args[1];
 var decompressedFile = Functions.DecryptJPK(source_file, out var translated_metadata);
 var Japanese_decompressedFile = Functions.DecryptJPK(japanese_file, out var japanese_meta_data);
 
-//var blob_file = Functions.CopyTranslationBlob(decompressedFile, Japanese_decompressedFile);
-
-
 Functions.ExtractQuestInfo(decompressedFile);
-
-//var translations = Functions.ExtractTranslations(decompressedFile, Japanese_decompressedFile);
-
-//var dir = Path.GetDirectoryName(source_file);
-//var translation_file = Path.Combine(dir, "translations.csv");
-
-//Functions.WriteTranslations(translations, translation_file);
+// TODO apply quest patches
 
 
-//var patched_file = Functions.ApplyTranslations(translation_file, Japanese_decompressedFile, decompressedFile);
+// Transfer Translations
+var translations = Functions.ExtractTranslations(decompressedFile, Japanese_decompressedFile);
 
-//var decompressedTargetFile = Functions.DecryptJPK(target_file, out var targetMetaFile);
-//var patched_file = Functions.ApplyTranslations(translation_file, Japanese_decompressedFile);
+var dir = Path.GetDirectoryName(source_file);
+var translation_file = Path.Combine(dir, "translations.csv");
 
-//var encrypted_patched_file = Functions.EncryptJPK(patched_file, translated_metadata);
-//var output = Path.Combine(dir, "mhfdat.bin");
-//if(File.Exists(output))
-//    File.Delete(output);
-//File.Copy(encrypted_patched_file, output);
-//Console.WriteLine($"Sucessfully transfered translations into '{output}'!");
-//Console.ReadLine();
+Functions.WriteTranslations(translations, translation_file);
+
+var patched_file = Functions.ApplyTranslations(translation_file, Japanese_decompressedFile, decompressedFile);
+
+var encrypted_patched_file = Functions.EncryptJPK(patched_file, translated_metadata);
+var output = Path.Combine(dir, "mhfdat.bin");
+
+if (File.Exists(output))
+    File.Delete(output);
+File.Copy(encrypted_patched_file, output);
+Console.WriteLine($"Sucessfully transfered translations into '{output}'!");
+Console.ReadLine();
